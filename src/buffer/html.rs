@@ -64,13 +64,13 @@ impl<T> OptionParser<T> {
     /// Render command line documentation for the app into html/markdown mix
     #[cfg(feature = "docgen")]
     pub fn render_html(&self, app: impl Into<String>) -> String {
-        collect_html(app.into(), &self.inner.meta(), &self.info).render_html(true, false)
+        collect_html(app.into(), &self.parser.meta(), &self.info).render_html(true, false)
     }
 
     /// Render command line documentation for the app into Markdown
     #[cfg(feature = "docgen")]
     pub fn render_markdown(&self, app: impl Into<String>) -> String {
-        collect_html(app.into(), &self.inner.meta(), &self.info).render_markdown(true)
+        collect_html(app.into(), &self.parser.meta(), &self.info).render_markdown(true)
     }
 }
 

@@ -1,3 +1,4 @@
+use core::marker::PhantomData;
 use crate::{complete_gen::ShowComp, Error, Meta, Parser, State};
 
 #[derive(Debug, Clone, Copy)]
@@ -50,15 +51,16 @@ pub enum ShellComp {
 
 /// Parser that inserts static shell completion into bpaf's dynamic shell completion
 #[cfg(feature = "autocomplete")]
-pub struct ParseCompShell<P> {
-    pub(crate) inner: P,
+pub struct ParseCompShell<P, T> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
     pub(crate) op: crate::complete_shell::ShellComp,
 }
 
 #[cfg(feature = "autocomplete")]
-impl<P, T> Parser<T> for ParseCompShell<P>
+impl<P, T> Parser<T> for ParseCompShell<P, T>
 where
-    P: Parser<T> + Sized,
+    P: Parser<T>,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         // same as with ParseComp the goal is to replace metavars added by inner parser
@@ -69,7 +71,7 @@ where
         let mut comp_items = Vec::new();
         args.swap_comps_with(&mut comp_items);
 
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
 
         // at this point comp_items contains values added by the inner parser
         args.swap_comps_with(&mut comp_items);
@@ -89,7 +91,7 @@ where
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }
 

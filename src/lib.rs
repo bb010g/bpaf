@@ -202,7 +202,7 @@ pub mod parsers {
     #[doc(inline)]
     pub use crate::structs::{
         ParseCollect, ParseCon, ParseCount, ParseFallback, ParseFallbackWith, ParseLast, ParseMany,
-        ParseTryFoldWith, ParseOptional, ParseSome,
+        ParseOptional, ParseSome, ParseTryFoldWith,
     };
 }
 
@@ -224,8 +224,9 @@ use crate::{
     parsers::{NamedArg, ParseAny, ParseCommand, ParsePositional},
     structs::{
         ParseCollect, ParseCount, ParseFail, ParseFallback, ParseFallbackWith, ParseGroupHelp,
-        ParseGuard, ParseHide, ParseLast, ParseMany, ParseTryFoldWith, ParseMap, ParseOptional,
-        ParseOrElse, ParsePure, ParsePureWith, ParseSome, ParseUsage, ParseWith, ParseWithGroupHelp,
+        ParseGuard, ParseHide, ParseLast, ParseMany, ParseMap, ParseOptional, ParseOrElse,
+        ParsePure, ParsePureWith, ParseSome, ParseTryFoldWith, ParseUsage, ParseWith,
+        ParseWithGroupHelp,
     },
 };
 
@@ -455,13 +456,14 @@ macro_rules! __cons_prepare {
     ($ty:tt [$($fields:ident)+]) => {{
         use $crate::Parser;
         let meta = $crate::Meta::And(vec![ $($fields.meta()),+ ]);
-        let inner = move |args: &mut $crate::State| {
+        let parser = move |args: &mut $crate::State| {
             $(let $fields = $fields.eval(args)?;)+
             args.current = None;
             ::std::result::Result::Ok::<_, $crate::Error>
                 ($crate::construct!(@make $ty [$($fields)+]))
         };
-        $crate::ParseCon { inner, meta }
+        let parser_item = ::core::marker::PhantomData;
+        $crate::ParseCon { parser, parser_item, meta }
     }};
 }
 
@@ -481,7 +483,7 @@ macro_rules! __cons_prepare {
     ($ty:tt [$($fields:ident)+]) => {{
         use $crate::Parser;
         let meta = $crate::Meta::And(vec![ $($fields.meta()),+ ]);
-        let inner = move |args: &mut $crate::State| {
+        let parser = move |args: &mut $crate::State| {
             $(let $fields = if args.is_comp() {
                 $fields.eval(args)
             } else {
@@ -493,7 +495,8 @@ macro_rules! __cons_prepare {
             ::std::result::Result::Ok::<_, $crate::Error>
                 ($crate::construct!(@make $ty [$($fields)+]))
         };
-        $crate::ParseCon { inner, meta }
+        let parser_item = ::core::marker::PhantomData;
+        $crate::ParseCon { parser, parser_item, meta }
     }};
 }
 
@@ -655,7 +658,7 @@ pub trait Parser<T> {
         Self: Sized,
     {
         ParseMany {
-            inner: self,
+            parser: self,
             catch: false,
         }
     }
@@ -670,9 +673,10 @@ pub trait Parser<T> {
     /// [`some`](Parser::some) also collects results to a vector but requires at least one
     /// element to succeed, [`collect`](Parser::collect) collects results into a [`FromIterator`]
     /// structure
-    fn try_fold_with<F>(self, init: F) -> ParseTryFoldWith<Self, T, F>
+    fn try_fold_with<F, U>(self, init: F) -> ParseTryFoldWith<Self, T, F>
     where
         Self: Sized,
+        ParseTryFoldWith<Self, T, F>: Parser<U>,
     {
         ParseTryFoldWith {
             parser: self,
@@ -698,15 +702,15 @@ pub trait Parser<T> {
     /// `collect` will collect at most one result that does not consume anything from the argument
     /// list allowing using it in combination of any parsers with a fallback. After the first one
     /// it will keep collecting the results as long as they consume something.
-    fn collect<C>(self) -> ParseCollect<Self, C, T>
+    fn collect<C>(self) -> ParseCollect<Self, T>
     where
-        C: FromIterator<T>,
         Self: Sized,
+        ParseCollect<Self, T>: Parser<C>,
     {
         ParseCollect {
-            inner: self,
+            parser: self,
+            parser_item: PhantomData,
             catch: false,
-            ctx: PhantomData,
         }
     }
     // }}}
@@ -732,12 +736,14 @@ pub trait Parser<T> {
     /// structure
 
     #[must_use]
-    fn some(self, message: &'static str) -> ParseSome<Self>
+    fn some(self, message: &'static str) -> ParseSome<Self, T>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
+        ParseSome<Self, T>: Parser<Vec<T>>,
     {
         ParseSome {
-            inner: self,
+            parser: self,
+            parser_item: PhantomData,
             message,
             catch: false,
         }
@@ -765,7 +771,7 @@ pub trait Parser<T> {
         Self: Sized + Parser<T>,
     {
         ParseOptional {
-            inner: self,
+            parser: self,
             catch: false,
         }
     }
@@ -783,8 +789,8 @@ pub trait Parser<T> {
         Self: Sized + Parser<T>,
     {
         ParseCount {
-            inner: self,
-            ctx: PhantomData,
+            parser: self,
+            parser_item: PhantomData,
         }
     }
 
@@ -793,11 +799,11 @@ pub trait Parser<T> {
     ///
     /// You can use this to allow users to pick contradicting options
     #[cfg_attr(not(doctest), doc = include_str!("docs2/last.md"))]
-    fn last(self) -> ParseLast<Self>
+    fn last(self) -> ParseLast<Self, T>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
-        ParseLast { inner: self }
+        ParseLast { parser: self, parser_item: PhantomData }
     }
 
     // parse
@@ -826,18 +832,15 @@ pub trait Parser<T> {
     ///
     #[cfg_attr(not(doctest), doc = include_str!("docs2/parse.md"))]
     ///
-    fn parse<F, R, E>(self, f: F) -> ParseWith<T, Self, F, E, R>
+    fn parse<F, U, E>(self, f: F) -> ParseWith<Self, T, F>
     where
         Self: Sized + Parser<T>,
-        F: Fn(T) -> Result<R, E>,
-        E: ToString,
+        ParseWith<Self, T, F>: Parser<Result<U, E>>,
     {
         ParseWith {
-            inner: self,
-            inner_res: PhantomData,
-            parse_fn: f,
-            res: PhantomData,
-            err: PhantomData,
+            parser: self,
+            parser_item: PhantomData,
+            f: f,
         }
     }
     // }}}
@@ -853,16 +856,15 @@ pub trait Parser<T> {
     ///
     #[cfg_attr(not(doctest), doc = include_str!("docs2/map.md"))]
     ///
-    fn map<F, R>(self, map: F) -> ParseMap<T, Self, F, R>
+    fn map<F, U>(self, map: F) -> ParseMap<Self, T, F>
     where
-        Self: Sized + Parser<T>,
-        F: Fn(T) -> R + 'static,
+        Self: Sized,
+        ParseMap<Self, T, F>: Parser<U>,
     {
         ParseMap {
-            inner: self,
-            inner_res: PhantomData,
-            map_fn: map,
-            res: PhantomData,
+            parser: self,
+            parser_item: PhantomData,
+            f: map,
         }
     }
     // }}}
@@ -881,11 +883,11 @@ pub trait Parser<T> {
     #[must_use]
     fn guard<F>(self, check: F, message: &'static str) -> ParseGuard<Self, F>
     where
-        Self: Sized + Parser<T>,
-        F: Fn(&T) -> bool,
+        Self: Sized,
+        ParseGuard<Self, F>: Parser<T>,
     {
         ParseGuard {
-            inner: self,
+            parser: self,
             check,
             message,
         }
@@ -909,10 +911,10 @@ pub trait Parser<T> {
     #[must_use]
     fn fallback(self, value: T) -> ParseFallback<Self, T>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
         ParseFallback {
-            inner: self,
+            parser: self,
             value,
             value_str: String::new(),
         }
@@ -932,18 +934,16 @@ pub trait Parser<T> {
     /// [`display_fallback`](ParseFallbackWith::display_fallback) and
     /// [`debug_fallback`](ParseFallbackWith::debug_fallback).
     #[must_use]
-    fn fallback_with<F, E>(self, fallback: F) -> ParseFallbackWith<T, Self, F, E>
+    fn fallback_with<F, E>(self, fallback: F) -> ParseFallbackWith<Self, T, F>
     where
-        Self: Sized + Parser<T>,
-        F: Fn() -> Result<T, E>,
-        E: ToString,
+        Self: Sized,
+        ParseFallbackWith<Self, T, F>: Parser<T>,
     {
         ParseFallbackWith {
-            inner: self,
-            inner_res: PhantomData,
+            parser: self,
+            parser_item: PhantomData,
             fallback,
             value_str: String::new(),
-            err: PhantomData,
         }
     }
     // }}}
@@ -1027,7 +1027,7 @@ pub trait Parser<T> {
     )]
     fn or_else<P>(self, alt: P) -> ParseOrElse<T>
     where
-        Self: Sized + Parser<T> + 'static,
+        Self: Sized + 'static,
         P: Sized + Parser<T> + 'static,
     {
         ParseOrElse {
@@ -1048,9 +1048,9 @@ pub trait Parser<T> {
     ///
     fn hide(self) -> ParseHide<Self>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
-        ParseHide { inner: self }
+        ParseHide { parser: self }
     }
     // }}}
 
@@ -1064,10 +1064,10 @@ pub trait Parser<T> {
     #[must_use]
     fn hide_usage(self) -> ParseUsage<Self>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
         ParseUsage {
-            inner: self,
+            parser: self,
             usage: Doc::default(),
         }
     }
@@ -1079,10 +1079,10 @@ pub trait Parser<T> {
     fn custom_usage<M>(self, usage: M) -> ParseUsage<Self>
     where
         M: Into<Doc>,
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
         ParseUsage {
-            inner: self,
+            parser: self,
             usage: usage.into(),
         }
     }
@@ -1096,10 +1096,10 @@ pub trait Parser<T> {
     #[cfg_attr(not(doctest), doc = include_str!("docs2/group_help.md"))]
     fn group_help<M: Into<Doc>>(self, message: M) -> ParseGroupHelp<Self>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
         ParseGroupHelp {
-            inner: self,
+            parser: self,
             message: message.into(),
         }
     }
@@ -1110,10 +1110,10 @@ pub trait Parser<T> {
     #[cfg_attr(not(doctest), doc = include_str!("docs2/with_group_help.md"))]
     fn with_group_help<F>(self, f: F) -> ParseWithGroupHelp<Self, F>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
         F: Fn(MetaInfo) -> Doc,
     {
-        ParseWithGroupHelp { inner: self, f }
+        ParseWithGroupHelp { parser: self, f }
     }
 
     // {{{ comp
@@ -1149,10 +1149,10 @@ pub trait Parser<T> {
     where
         M: Into<String>,
         F: Fn(&T) -> Vec<(M, Option<M>)>,
-        Self: Sized + Parser<T>,
+        Self: Sized,
     {
         ParseComp {
-            inner: self,
+            parser: self,
             op,
             group: None,
         }
@@ -1201,11 +1201,12 @@ pub trait Parser<T> {
     fn complete_shell(
         self,
         op: complete_shell::ShellComp,
-    ) -> crate::complete_shell::ParseCompShell<Self>
+    ) -> crate::complete_shell::ParseCompShell<Self, T>
     where
-        Self: Sized + Parser<T>,
+        Self: Sized,
+        crate::complete_shell::ParseCompShell<Self, T>: Parser<T>,
     {
-        crate::complete_shell::ParseCompShell { inner: self, op }
+        crate::complete_shell::ParseCompShell { parser: self, parser_item: PhantomData, op }
     }
     // }}}
 
@@ -1229,11 +1230,11 @@ pub trait Parser<T> {
     /// There's some methods implemented on [`OptionParser`] directly to customize the appearance
     fn to_options(self) -> OptionParser<T>
     where
-        Self: Sized + Parser<T> + 'static,
+        Self: Sized + 'static,
     {
         OptionParser {
             info: info::Info::default(),
-            inner: Box::new(self),
+            parser: Box::new(self),
         }
     }
     // }}}
@@ -1252,7 +1253,7 @@ pub trait Parser<T> {
     /// ```
     fn run(self) -> T
     where
-        Self: Sized + Parser<T> + 'static,
+        Self: Sized + 'static,
     {
         self.to_options().run()
     }
@@ -1268,7 +1269,7 @@ pub trait Parser<T> {
     #[cfg_attr(not(doctest), doc = include_str!("docs2/boxed.md"))]
     fn boxed(self) -> Box<dyn Parser<T>>
     where
-        Self: Sized + Parser<T> + 'static,
+        Self: Sized + 'static,
     {
         Box::new(self)
     }

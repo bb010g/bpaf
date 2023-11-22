@@ -5,19 +5,18 @@ use crate::{
     error::{Message, MissingItem},
     Doc, Error, Meta, Parser,
 };
-use std::{borrow::{BorrowMut, Cow}, marker::PhantomData};
+use std::{borrow::Cow, marker::PhantomData};
 
 /// Parser that substitutes missing value with a function results but not parser
 /// failure, created with [`fallback_with`](Parser::fallback_with).
-pub struct ParseFallbackWith<T, P, F, E> {
-    pub(crate) inner: P,
-    pub(crate) inner_res: PhantomData<T>,
+pub struct ParseFallbackWith<P, T, F> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
     pub(crate) fallback: F,
     pub(crate) value_str: String,
-    pub(crate) err: PhantomData<E>,
 }
 
-impl<T, P, F, E> Parser<T> for ParseFallbackWith<T, P, F, E>
+impl<P, T, F, E> Parser<T> for ParseFallbackWith<P, T, F>
 where
     P: Parser<T>,
     F: Fn() -> Result<T, E>,
@@ -25,7 +24,7 @@ where
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         let mut clone = args.clone();
-        match self.inner.eval(&mut clone) {
+        match self.parser.eval(&mut clone) {
             Ok(ok) => {
                 std::mem::swap(args, &mut clone);
                 Ok(ok)
@@ -46,7 +45,7 @@ where
     }
 
     fn meta(&self) -> Meta {
-        let m = Meta::Optional(Box::new(self.inner.meta()));
+        let m = Meta::Optional(Box::new(self.parser.meta()));
         if self.value_str.is_empty() {
             m
         } else {
@@ -58,7 +57,7 @@ where
 
 /// Parser with attached message to several fields, created with [`group_help`](Parser::group_help).
 pub struct ParseGroupHelp<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) message: Doc,
 }
 
@@ -73,7 +72,7 @@ where
         args.swap_comps_with(&mut comp_items);
 
         #[allow(clippy::let_and_return)]
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
 
         #[cfg(feature = "autocomplete")]
         args.swap_comps_with(&mut comp_items);
@@ -84,14 +83,14 @@ where
     }
 
     fn meta(&self) -> Meta {
-        let meta = Box::new(self.inner.meta());
+        let meta = Box::new(self.parser.meta());
         Meta::Subsection(meta, Box::new(self.message.clone()))
     }
 }
 
 /// Parser with attached message to several fields, created with [`group_help`](Parser::group_help).
 pub struct ParseWithGroupHelp<P, F> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) f: F,
 }
 
@@ -101,11 +100,11 @@ where
     F: Fn(MetaInfo) -> Doc,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
-        self.inner.eval(args)
+        self.parser.eval(args)
     }
 
     fn meta(&self) -> Meta {
-        let meta = self.inner.meta();
+        let meta = self.parser.meta();
         let buf = (self.f)(MetaInfo(&meta));
 
         Meta::Subsection(Box::new(meta), Box::new(buf))
@@ -115,13 +114,14 @@ where
 /// Apply inner parser several times and collect results into `Vec`, created with
 /// [`some`](Parser::some), requires for at least one item to be available to succeed.
 /// Implements [`catch`](ParseMany::catch)
-pub struct ParseSome<P> {
-    pub(crate) inner: P,
+pub struct ParseSome<P, T> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
     pub(crate) message: &'static str,
     pub(crate) catch: bool,
 }
 
-impl<P> ParseSome<P> {
+impl<P, T> ParseSome<P, T> {
     #[must_use]
     /// Handle parse failures
     ///
@@ -138,7 +138,7 @@ impl<P> ParseSome<P> {
     }
 }
 
-impl<T, P> Parser<Vec<T>> for ParseSome<P>
+impl<P, T> Parser<Vec<T>> for ParseSome<P, T>
 where
     P: Parser<T>,
 {
@@ -146,7 +146,7 @@ where
         let mut res = Vec::new();
         let mut len = usize::MAX;
 
-        while let Some(val) = parse_option(&self.inner, &mut len, args, self.catch)? {
+        while let Some(val) = parse_option(&self.parser, &mut len, args, self.catch)? {
             res.push(val);
         }
 
@@ -158,20 +158,20 @@ where
     }
 
     fn meta(&self) -> Meta {
-        Meta::Many(Box::new(Meta::Required(Box::new(self.inner.meta()))))
+        Meta::Many(Box::new(Meta::Required(Box::new(self.parser.meta()))))
     }
 }
 
 /// Apply inner parser several times and collect results into `FromIterator`, created with
 /// [`collect`](Parser::collect),
 /// Implements [`catch`](ParseCollect::catch)
-pub struct ParseCollect<P, C, T> {
-    pub(crate) inner: P,
+pub struct ParseCollect<P, T> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
     pub(crate) catch: bool,
-    pub(crate) ctx: PhantomData<(C, T)>,
 }
 
-impl<T, C, P> ParseCollect<P, C, T> {
+impl<P, T> ParseCollect<P, T> {
     #[must_use]
     /// Handle parse failures
     ///
@@ -188,26 +188,26 @@ impl<T, C, P> ParseCollect<P, C, T> {
     }
 }
 
-impl<T, C, P> Parser<C> for ParseCollect<P, C, T>
+impl<P, T, C> Parser<C> for ParseCollect<P, T>
 where
     P: Parser<T>,
     C: FromIterator<T>,
 {
     fn eval(&self, args: &mut State) -> Result<C, Error> {
         let mut len = usize::MAX;
-        std::iter::from_fn(|| parse_option(&self.inner, &mut len, args, self.catch).transpose())
+        std::iter::from_fn(|| parse_option(&self.parser, &mut len, args, self.catch).transpose())
             .collect::<Result<C, Error>>()
     }
 
     fn meta(&self) -> Meta {
-        Meta::Many(Box::new(Meta::Required(Box::new(self.inner.meta()))))
+        Meta::Many(Box::new(Meta::Required(Box::new(self.parser.meta()))))
     }
 }
 
 /// Parser that returns results as usual but not shown in `--help` output, created with
 /// [`Parser::hide`]
 pub struct ParseHide<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
 }
 
 impl<T, P> Parser<T> for ParseHide<P>
@@ -222,7 +222,7 @@ where
         args.swap_comps_with(&mut comps);
 
         #[allow(clippy::let_and_return)]
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
 
         #[cfg(feature = "autocomplete")]
         args.swap_comps_with(&mut comps);
@@ -242,7 +242,7 @@ where
 ///
 /// No other changes to the inner parser
 pub struct ParseUsage<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) usage: Doc,
 }
 impl<T, P> Parser<T> for ParseUsage<P>
@@ -250,11 +250,11 @@ where
     P: Parser<T>,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
-        self.inner.eval(args)
+        self.parser.eval(args)
     }
 
     fn meta(&self) -> Meta {
-        Meta::CustomUsage(Box::new(self.inner.meta()), Box::new(self.usage.clone()))
+        Meta::CustomUsage(Box::new(self.parser.meta()), Box::new(self.usage.clone()))
     }
 }
 
@@ -421,37 +421,35 @@ fn this_or_that_picks_first(
 
 /// Parser that transforms parsed value with a failing function, created with
 /// [`parse`](Parser::parse)
-pub struct ParseWith<T, P, F, E, R> {
-    pub(crate) inner: P,
-    pub(crate) inner_res: PhantomData<T>,
-    pub(crate) parse_fn: F,
-    pub(crate) res: PhantomData<R>,
-    pub(crate) err: PhantomData<E>,
+pub struct ParseWith<P, T, F> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
+    pub(crate) f: F,
 }
 
-impl<T, P, F, E, R> Parser<R> for ParseWith<T, P, F, E, R>
+impl<P, T, F, U, E> Parser<U> for ParseWith<P, T, F>
 where
     P: Parser<T>,
-    F: Fn(T) -> Result<R, E>,
+    F: Fn(T) -> Result<U, E>,
     E: ToString,
 {
-    fn eval(&self, args: &mut State) -> Result<R, Error> {
-        let t = self.inner.eval(args)?;
-        match (self.parse_fn)(t) {
+    fn eval(&self, args: &mut State) -> Result<U, Error> {
+        let t = self.parser.eval(args)?;
+        match (self.f)(t) {
             Ok(r) => Ok(r),
             Err(e) => Err(Error(Message::ParseFailed(args.current, e.to_string()))),
         }
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }
 
 /// Parser that substitutes missing value but not parse failure, created with
 /// [`fallback`](Parser::fallback).
 pub struct ParseFallback<P, T> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) value: T,
     pub(crate) value_str: String,
 }
@@ -463,7 +461,7 @@ where
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         let mut clone = args.clone();
-        match self.inner.eval(&mut clone) {
+        match self.parser.eval(&mut clone) {
             Ok(ok) => {
                 std::mem::swap(args, &mut clone);
                 Ok(ok)
@@ -481,7 +479,7 @@ where
     }
 
     fn meta(&self) -> Meta {
-        let m = Meta::Optional(Box::new(self.inner.meta()));
+        let m = Meta::Optional(Box::new(self.parser.meta()));
         if self.value_str.is_empty() {
             m
         } else {
@@ -515,7 +513,7 @@ impl<P, T: std::fmt::Debug> ParseFallback<P, T> {
     }
 }
 
-impl<P, T: std::fmt::Display, F, E> ParseFallbackWith<T, P, F, E>
+impl<P, T: std::fmt::Display, F, E> ParseFallbackWith<P, T, F>
 where
     F: Fn() -> Result<T, E>,
 {
@@ -534,7 +532,7 @@ where
     }
 }
 
-impl<P, T: std::fmt::Debug, F, E> ParseFallbackWith<T, P, F, E>
+impl<P, T: std::fmt::Debug, F, E> ParseFallbackWith<P, T, F>
 where
     F: Fn() -> Result<T, E>,
 {
@@ -555,18 +553,18 @@ where
 
 /// Parser fails with a message if check returns false, created with [`guard`](Parser::guard).
 pub struct ParseGuard<P, F> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) check: F,
     pub(crate) message: &'static str,
 }
 
-impl<T, P, F> Parser<T> for ParseGuard<P, F>
+impl<P, T, F> Parser<T> for ParseGuard<P, F>
 where
     P: Parser<T>,
     F: Fn(&T) -> bool,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
-        let t = self.inner.eval(args)?;
+        let t = self.parser.eval(args)?;
         if (self.check)(&t) {
             Ok(t)
         } else {
@@ -575,15 +573,15 @@ where
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }
 
 /// Apply inner parser as many times as it succeeds while consuming something and return this
 /// number
 pub struct ParseCount<P, T> {
-    pub(crate) inner: P,
-    pub(crate) ctx: PhantomData<T>,
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
 }
 
 impl<T, P> Parser<usize> for ParseCount<P, T>
@@ -594,7 +592,7 @@ where
         let mut res = 0;
         let mut current = args.len();
         let mut len = usize::MAX;
-        while (parse_option(&self.inner, &mut len, args, false)?).is_some() {
+        while (parse_option(&self.parser, &mut len, args, false)?).is_some() {
             res += 1;
             if current == args.len() {
                 break;
@@ -605,17 +603,18 @@ where
     }
 
     fn meta(&self) -> Meta {
-        Meta::Many(Box::new(Meta::Optional(Box::new(self.inner.meta()))))
+        Meta::Many(Box::new(Meta::Optional(Box::new(self.parser.meta()))))
     }
 }
 
 /// Apply inner parser as many times as it succeeds while consuming something and return this
 /// number
-pub struct ParseLast<P> {
-    pub(crate) inner: P,
+pub struct ParseLast<P, T> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
 }
 
-impl<T, P> Parser<T> for ParseLast<P>
+impl<P, T> Parser<T> for ParseLast<P, T>
 where
     P: Parser<T>,
 {
@@ -623,7 +622,7 @@ where
         let mut last = None;
         let mut current = args.len();
         let mut len = usize::MAX;
-        while let Some(val) = parse_option(&self.inner, &mut len, args, false)? {
+        while let Some(val) = parse_option(&self.parser, &mut len, args, false)? {
             last = Some(val);
             if current == args.len() {
                 break;
@@ -633,12 +632,12 @@ where
         if let Some(last) = last {
             Ok(last)
         } else {
-            self.inner.eval(args)
+            self.parser.eval(args)
         }
     }
 
     fn meta(&self) -> Meta {
-        Meta::Many(Box::new(Meta::Required(Box::new(self.inner.meta()))))
+        Meta::Many(Box::new(Meta::Required(Box::new(self.parser.meta()))))
     }
 }
 
@@ -646,7 +645,7 @@ where
 /// and return `None` if any are missing. Created with [`optional`](Parser::optional). Implements
 /// [`catch`](ParseOptional::catch)
 pub struct ParseOptional<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) catch: bool,
 }
 
@@ -656,11 +655,11 @@ where
 {
     fn eval(&self, args: &mut State) -> Result<Option<T>, Error> {
         let mut len = usize::MAX;
-        parse_option(&self.inner, &mut len, args, self.catch)
+        parse_option(&self.parser, &mut len, args, self.catch)
     }
 
     fn meta(&self) -> Meta {
-        Meta::Optional(Box::new(self.inner.meta()))
+        Meta::Optional(Box::new(self.parser.meta()))
     }
 }
 
@@ -688,7 +687,7 @@ impl<P> ParseOptional<P> {
 /// Apply inner parser several times and collect results into `Vec`, created with
 /// [`many`](Parser::many), implements [`catch`](ParseMany::catch).
 pub struct ParseMany<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) catch: bool,
 }
 
@@ -764,12 +763,12 @@ where
 {
     fn eval(&self, args: &mut State) -> Result<Vec<T>, Error> {
         let mut len = usize::MAX;
-        std::iter::from_fn(|| parse_option(&self.inner, &mut len, args, self.catch).transpose())
+        std::iter::from_fn(|| parse_option(&self.parser, &mut len, args, self.catch).transpose())
             .collect::<Result<Vec<T>, Error>>()
     }
 
     fn meta(&self) -> Meta {
-        Meta::Many(Box::new(Meta::Optional(Box::new(self.inner.meta()))))
+        Meta::Many(Box::new(Meta::Optional(Box::new(self.parser.meta()))))
     }
 }
 
@@ -795,18 +794,16 @@ impl<P, T: ?Sized, F> ParseTryFoldWith<P, T, F> {
         self
     }
 }
-impl<P, T, F, GOwner, G, U, E> Parser<U> for ParseTryFoldWith<P, T, F>
+impl<P, T, F, G, U, E> Parser<U> for ParseTryFoldWith<P, T, F>
 where
     P: Parser<T>,
-    F: Fn() -> (U, GOwner, PhantomData<G>),
-    GOwner: BorrowMut<G>,
+    F: Fn() -> (U, G),
     G: FnMut(U, T) -> Result<U, E>,
     Cow<'static, str>: From<E>,
 {
     fn eval(&self, args: &mut State) -> Result<U, Error> {
         let mut len = usize::MAX;
-        let (mut accum, mut f, _) = (self.init)();
-        let f = f.borrow_mut();
+        let (mut accum, mut f) = (self.init)();
         while let Some(x) = parse_option(&self.parser, &mut len, args, self.catch)? {
             accum = f(accum, x).map_err(|e| Error(Message::ParseFail(e.into())))?;
         }
@@ -868,41 +865,42 @@ impl<T> Parser<T> for ParseFail<T> {
 }
 
 /// Parser that transforms parsed value with a function, created with [`map`](Parser::map).
-pub struct ParseMap<T, P, F, R> {
-    pub(crate) inner: P,
-    pub(crate) inner_res: PhantomData<T>,
-    pub(crate) map_fn: F,
-    pub(crate) res: PhantomData<R>,
+pub struct ParseMap<P, T, F> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
+    pub(crate) f: F,
 }
-impl<P, T, F, R> Parser<R> for ParseMap<T, P, F, R>
+impl<P, T, F, U> Parser<U> for ParseMap<P, T, F>
 where
-    F: Fn(T) -> R,
-    P: Parser<T> + Sized,
+    P: Parser<T>,
+    F: Fn(T) -> U,
 {
-    fn eval(&self, args: &mut State) -> Result<R, Error> {
-        let t = self.inner.eval(args)?;
-        Ok((self.map_fn)(t))
+    fn eval(&self, args: &mut State) -> Result<U, Error> {
+        let t = self.parser.eval(args)?;
+        Ok((self.f)(t))
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }
 
 /// Create parser from a function, [`construct!`](crate::construct!) uses it internally
-pub struct ParseCon<P> {
+pub struct ParseCon<P, T> {
     /// inner parser closure
-    pub inner: P,
+    pub parser: P,
+    /// inner parser item type marker
+    pub parser_item: PhantomData<T>,
     /// metas for inner parsers
     pub meta: Meta,
 }
 
-impl<T, P> Parser<T> for ParseCon<P>
+impl<P, T> Parser<T> for ParseCon<P, T>
 where
     P: Fn(&mut State) -> Result<T, Error>,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
-        let res = (self.inner)(args);
+        let res = (self.parser)(args);
         args.current = None;
         res
     }
@@ -912,7 +910,7 @@ where
     }
 }
 
-impl<T> ParseCon<T> {
+impl<P, T> ParseCon<P, T> {
     #[must_use]
 
     /// Automagically restrict the inner parser scope to accept adjacent values only
@@ -973,15 +971,15 @@ impl<T> ParseCon<T> {
     /// There's also similar method [`adjacent`](crate::parsers::ParseArgument) that allows to restrict argument
     /// parser to work only for arguments where both key and a value are in the same shell word:
     /// `-f=bar` or `-fbar`, but not `-f bar`.
-    pub fn adjacent(self) -> ParseAdjacent<Self> {
-        ParseAdjacent { inner: self }
+    pub fn adjacent(self) -> ParseAdjacent<Self, T> {
+        ParseAdjacent { parser: self, parser_item: PhantomData }
     }
 }
 
 /// Parser that replaces metavar placeholders with actual info in shell completion
 #[cfg(feature = "autocomplete")]
 pub struct ParseComp<P, F> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) op: F,
     pub(crate) group: Option<String>,
 }
@@ -1008,7 +1006,7 @@ where
         let mut comp_items = Vec::new();
         args.swap_comps_with(&mut comp_items);
 
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
 
         // restore old, now metavars added by inner parser, if any, are in comp_items
         args.swap_comps_with(&mut comp_items);
@@ -1053,14 +1051,14 @@ where
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }
 
 /*
 #[cfg(feature = "autocomplete")]
 pub struct ParseCompStyle<P> {
-    pub(crate) inner: P,
+    pub(crate) parser: P,
     pub(crate) style: CompleteDecor,
 }
 
@@ -1072,28 +1070,29 @@ where
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         let mut comp_items = Vec::new();
         args.swap_comps_with(&mut comp_items);
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
         args.swap_comps_with(&mut comp_items);
         args.extend_with_style(self.style, &mut comp_items);
         res
     }
 
     fn meta(&self) -> Meta {
-        self.inner.meta()
+        self.parser.meta()
     }
 }*/
 
-pub struct ParseAdjacent<P> {
-    pub(crate) inner: P,
+pub struct ParseAdjacent<P, T> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
 }
-impl<P, T> Parser<T> for ParseAdjacent<P>
+impl<P, T> Parser<T> for ParseAdjacent<P, T>
 where
     P: Parser<T> + Sized,
 {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         let original_scope = args.scope();
 
-        let mut best_error = if let Some(item) = Meta::first_item(&self.inner.meta()) {
+        let mut best_error = if let Some(item) = Meta::first_item(&self.parser.meta()) {
             let missing_item = MissingItem {
                 item,
                 position: original_scope.start,
@@ -1127,7 +1126,7 @@ where
                 continue;
             }
 
-            let _ = self.inner.eval(&mut scratch);
+            let _ = self.parser.eval(&mut scratch);
 
             if before == scratch.len() {
                 // failed to consume anything which means we don't start parsing at this point
@@ -1144,7 +1143,7 @@ where
             }
 
             loop {
-                match self.inner.eval(&mut this_arg) {
+                match self.parser.eval(&mut this_arg) {
                     Ok(res) => {
                         // there's a smaller adjacent scope, we must try it before returning.
                         if let Some(adj_scope) = this_arg.adjacent_scope(args) {
@@ -1174,7 +1173,7 @@ where
     }
 
     fn meta(&self) -> Meta {
-        let meta = self.inner.meta();
+        let meta = self.parser.meta();
         Meta::Adjacent(Box::new(meta))
     }
 }

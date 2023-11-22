@@ -10,13 +10,13 @@ mod boilerplate {
         fn my_last(self) -> ParseLast<T>;
     }
 
-    impl<T> Parser<T> for ParseLast<T> {
+    impl<P, T> Parser<P, T> for ParseLast<P, T> {
         fn eval(&self, args: &mut State) -> Result<T, Error> {
-            self.inner.eval(args)
+            self.parser.eval(args)
         }
 
         fn meta(&self) -> Meta {
-            self.inner.meta()
+            self.parser.meta()
         }
     }
 

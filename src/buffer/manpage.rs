@@ -58,7 +58,7 @@ impl<T> OptionParser<T> {
         application_title: Option<&str>,
     ) -> String {
         let mut sections = Vec::new();
-        let root = self.inner.meta();
+        let root = self.parser.meta();
         let mut path = vec![app.as_ref().to_string()];
 
         extract_sections(&root, &self.info, &mut path, &mut sections);

@@ -8,7 +8,7 @@ use std::{convert::Infallible, path::PathBuf};
 #[bpaf(options("asm"))] // derives cargo helper for cargo-asm
 #[allow(clippy::struct_excessive_bools)]
 pub struct Options {
-    #[bpaf(external(parse_manifest_path))]
+    #[bpaf(external(parse_manifest_path()))]
     pub manifest_path: PathBuf,
     /// Custom target directory for generated artifacts
     #[bpaf(argument("DIR"))]
@@ -71,7 +71,7 @@ pub struct Format {
     /// Print interleaved Rust code
     pub rust: bool,
 
-    #[bpaf(external(color_detection))]
+    #[bpaf(external(color_detection()))]
     pub color: bool,
 
     /// include full demangled name instead of just prefix

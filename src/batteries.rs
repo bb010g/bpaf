@@ -25,23 +25,30 @@ use crate::{construct, literal, parsers::NamedArg, short, Parser};
 /// }
 /// ```
 #[must_use]
-pub fn verbose_and_quiet_by_number(offset: isize, min: isize, max: isize) -> impl Parser<isize> {
-    #![allow(clippy::cast_possible_wrap)]
+pub fn verbose_and_quiet_by_number<T, U>(offset: T, step: U, min: T, max: T) -> impl Parser<T>
+where
+    T: core::ops::Add<U> + core::ops::Add<U, Output = T> + core::ops::Sub<U, Output = T> + core::cmp::Ord + Copy,
+    U: Copy,
+{
     let verbose = short('v')
         .long("verbose")
-        .help("Increase output verbosity, can be used several times")
-        .req_flag(())
-        .many()
-        .map(|v| v.len() as isize);
+        .help("Increases output verbosity (repeatable)")
+        .req_flag(true);
 
     let quiet = short('q')
         .long("quiet")
-        .help("Decrease output verbosity, can be used several times")
-        .req_flag(())
-        .many()
-        .map(|v| v.len() as isize);
+        .help("Decreases output verbosity (repeatable)")
+        .req_flag(false);
 
-    construct!(verbose, quiet).map(move |(v, q)| (v - q + offset).clamp(min, max))
+    construct!([verbose, quiet]).try_fold_with(move || {
+        (offset, move |verbosity: T, sign| -> Result<_, &'static str> {
+            if sign {
+                Ok(verbosity.add(step))
+            } else {
+                Ok(verbosity.sub(step))
+            }
+        })
+    }).map(move |verbosity| verbosity.clamp(min, max))
 }
 
 /// `--verbose` and `--quiet` flags with results choosen from a slice of values
@@ -83,10 +90,8 @@ pub fn verbose_by_slice<T: Copy + 'static, const N: usize>(
     offset: usize,
     items: [T; N],
 ) -> impl Parser<T> {
-    #![allow(clippy::cast_possible_wrap)]
-    #![allow(clippy::cast_sign_loss)]
-    verbose_and_quiet_by_number(offset as isize, 0, items.len() as isize - 1)
-        .map(move |i| items[i as usize])
+    verbose_and_quiet_by_number::<usize, usize>(offset, 1, 0, items.len() - 1)
+        .map(move |i| items[i])
 }
 
 /// Pick last passed value between two different flags

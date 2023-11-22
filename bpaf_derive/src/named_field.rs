@@ -1,8 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    parse::ParseStream, parse_quote, spanned::Spanned, token, Attribute, Error, Ident, LitStr,
-    Result, Type, Visibility,
+    parse::ParseStream, parse_quote, spanned::Spanned, token, Attribute, Error, Expr, Ident,
+    LitStr, Result, Type, Visibility,
 };
 
 use crate::{
@@ -93,8 +93,8 @@ impl ToTokens for Consumer {
                 let tf = ty.as_ref().map(TurboFish);
                 quote!(::bpaf::positional #tf(#metavar))
             }
-            Consumer::External { ident, .. } => {
-                quote!(#ident())
+            Consumer::External { expr, .. } => {
+                quote!(#expr)
             }
             Consumer::Pure { expr, .. } => {
                 quote!(::bpaf::pure(#expr))
@@ -179,14 +179,15 @@ impl StructField {
             None => derive_consumer(name.is_some() || !field_attrs.naming.is_empty(), &ty)?,
         };
 
-        if let Consumer::External { span, ident: None } = &cons {
+        if let Consumer::External { span, expr: None } = &cons {
             let span = *span;
             match name.as_ref() {
                 Some(n) => {
                     let ident = Ident::new(&to_snake_case(&n.to_string()), n.span());
+                    let expr: Expr = parse_quote!(#ident());
                     cons = Consumer::External {
                         span,
-                        ident: Some(ident.into()),
+                        expr: Some(expr.into()),
                     };
                 }
                 None => {

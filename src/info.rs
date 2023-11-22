@@ -55,7 +55,7 @@ impl Default for Info {
 /// subcommand as a whole, version, custom usage, if specified, and handles custom parsers for
 /// `--version` and `--help` flags.
 pub struct OptionParser<T> {
-    pub(crate) inner: Box<dyn Parser<T>>,
+    pub(crate) parser: Box<dyn Parser<T>>,
     pub(crate) info: Info,
 }
 
@@ -197,7 +197,7 @@ impl<T> OptionParser<T> {
         // prepare available short flags and arguments for disambiguation
         let mut short_flags = Vec::new();
         let mut short_args = Vec::new();
-        self.inner
+        self.parser
             .meta()
             .collect_shorts(&mut short_flags, &mut short_args);
         short_flags.extend(&self.info.help_arg.short);
@@ -208,7 +208,7 @@ impl<T> OptionParser<T> {
 
         // this only handles disambiguation failure in construct
         if let Some(msg) = err {
-            return Err(msg.render(&state, &self.inner.meta()));
+            return Err(msg.render(&state, &self.parser.meta()));
         }
 
         self.run_subparser(&mut state)
@@ -232,14 +232,14 @@ impl<T> OptionParser<T> {
             let buffer = render_help(
                 &args.path,
                 &self.info,
-                &self.inner.meta(),
+                &self.parser.meta(),
                 &self.info.meta(),
                 true,
             );
             return Err(ParseFailure::Stdout(buffer, false));
         };
 
-        let res = self.inner.eval(args);
+        let res = self.parser.eval(args);
         if let Err(Error(Message::ParseFailure(failure))) = res {
             return Err(failure);
         }
@@ -268,7 +268,7 @@ impl<T> OptionParser<T> {
                     render_help(
                         &args.path,
                         &self.info,
-                        &self.inner.meta(),
+                        &self.parser.meta(),
                         &self.info.meta(),
                         true,
                     )
@@ -285,7 +285,7 @@ impl<T> OptionParser<T> {
             };
             return Err(ParseFailure::Stdout(buffer, detailed));
         }
-        Err(err.render(args, &self.inner.meta()))
+        Err(err.render(args, &self.parser.meta()))
     }
 
     /// Get first line of description if Available
@@ -577,7 +577,7 @@ impl<T> OptionParser<T> {
         F: Fn(Doc) -> Doc,
     {
         let mut buf = Doc::default();
-        buf.write_meta(&self.inner.meta(), true);
+        buf.write_meta(&self.parser.meta(), true);
         self.info.usage = Some(f(buf));
         self
     }
@@ -601,7 +601,7 @@ impl<T> OptionParser<T> {
     ///
     /// `check_invariants` indicates problems with panic
     pub fn check_invariants(&self, _cosmetic: bool) {
-        self.inner.meta().positional_invariant_check(true);
+        self.parser.meta().positional_invariant_check(true);
     }
 
     /// Customize parser for `--help`

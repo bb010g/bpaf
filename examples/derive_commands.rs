@@ -23,9 +23,9 @@ pub enum Action {
     Explain {
         #[bpaf(positional("CRATE"))]
         krate: String,
-        #[bpaf(external(feature_if))]
+        #[bpaf(external(feature_if()))]
         feature: Option<String>,
-        #[bpaf(external(version_if))]
+        #[bpaf(external(version_if()))]
         version: Option<String>,
     },
 }

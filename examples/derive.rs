@@ -11,7 +11,7 @@ struct Opts {
     #[bpaf(short, long)]
     debug: bool,
     /// this comment is ignored
-    #[bpaf(external(verbose))]
+    #[bpaf(external(verbose()))]
     verbose: usize,
     /// Set speed
     #[bpaf(argument("SPEED"), fallback(42.0))]

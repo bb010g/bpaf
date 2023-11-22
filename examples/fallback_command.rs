@@ -12,7 +12,7 @@ enum Commands {
         /// Optimization level
         opt: u32,
     },
-    Fallback(#[bpaf(external(fallback), hide)] Fallback),
+    Fallback(#[bpaf(external(fallback()), hide)] Fallback),
 }
 
 #[derive(Debug, Clone, Bpaf)]
