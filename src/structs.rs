@@ -5,7 +5,7 @@ use crate::{
     error::{Message, MissingItem},
     Doc, Error, Meta, Parser,
 };
-use std::marker::PhantomData;
+use std::{borrow::{BorrowMut, Cow}, marker::PhantomData};
 
 /// Parser that substitutes missing value with a function results but not parser
 /// failure, created with [`fallback_with`](Parser::fallback_with).
@@ -773,6 +773,51 @@ where
     }
 }
 
+pub struct ParseTryFoldWith<P, T: ?Sized, F> {
+    pub(crate) parser: P,
+    pub(crate) parser_item: PhantomData<T>,
+    pub(crate) init: F,
+    pub(crate) catch: bool,
+}
+impl<P, T: ?Sized, F> ParseTryFoldWith<P, T, F> {
+    #[must_use]
+    /// Handle parse failures
+    ///
+    /// Can be useful to decide to skip parsing of some items on a command line
+    /// When parser succeeds - `catch` version would return a value as usual
+    /// if it fails - `catch` would restore all the consumed values and return None.
+    ///
+    /// There's several structures that implement this attribute: [`ParseOptional`], [`ParseMany`]
+    /// and [`ParseSome`], behavior should be identical for all of them.
+    #[cfg_attr(not(doctest), doc = include_str!("docs2/some_catch.md"))]
+    pub fn catch(mut self) -> Self {
+        self.catch = true;
+        self
+    }
+}
+impl<P, T, F, GOwner, G, U, E> Parser<U> for ParseTryFoldWith<P, T, F>
+where
+    P: Parser<T>,
+    F: Fn() -> (U, GOwner, PhantomData<G>),
+    GOwner: BorrowMut<G>,
+    G: FnMut(U, T) -> Result<U, E>,
+    Cow<'static, str>: From<E>,
+{
+    fn eval(&self, args: &mut State) -> Result<U, Error> {
+        let mut len = usize::MAX;
+        let (mut accum, mut f, _) = (self.init)();
+        let f = f.borrow_mut();
+        while let Some(x) = parse_option(&self.parser, &mut len, args, self.catch)? {
+            accum = f(accum, x).map_err(|e| Error(Message::ParseFail(e.into())))?;
+        }
+        Ok(accum)
+    }
+
+    fn meta(&self) -> Meta {
+        Meta::Many(Box::new(Meta::Optional(Box::new(self.parser.meta()))))
+    }
+}
+
 /// Parser that returns a given value without consuming anything, created with
 /// [`pure`](crate::pure).
 pub struct ParsePure<T>(pub(crate) T);
@@ -808,13 +853,13 @@ impl<T: Clone + 'static, F: Fn() -> Result<T, E>, E: ToString> Parser<T>
 
 /// Parser that fails without consuming any input, created with [`fail`](crate::fail).
 pub struct ParseFail<T> {
-    pub(crate) field1: &'static str,
+    pub(crate) field1: Cow<'static, str>,
     pub(crate) field2: PhantomData<T>,
 }
 impl<T> Parser<T> for ParseFail<T> {
     fn eval(&self, args: &mut State) -> Result<T, Error> {
         args.current = None;
-        Err(Error(Message::ParseFail(self.field1)))
+        Err(Error(Message::ParseFail(self.field1.clone())))
     }
 
     fn meta(&self) -> Meta {

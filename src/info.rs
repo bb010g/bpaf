@@ -7,6 +7,7 @@ use crate::{
     parsers::NamedArg,
     short, Doc, Error, Meta, ParseFailure, Parser,
 };
+use std::borrow::Cow;
 
 /// Information about the parser
 ///
@@ -674,7 +675,9 @@ impl Parser<ExtraParams> for Info {
         }
 
         // error message is not actually used anywhere
-        Err(Error(Message::ParseFail("not a version or help")))
+        Err(Error(Message::ParseFail(Cow::Borrowed(
+            "not a version or help",
+        ))))
     }
 
     fn meta(&self) -> Meta {

@@ -202,7 +202,7 @@ pub mod parsers {
     #[doc(inline)]
     pub use crate::structs::{
         ParseCollect, ParseCon, ParseCount, ParseFallback, ParseFallbackWith, ParseLast, ParseMany,
-        ParseOptional, ParseSome,
+        ParseTryFoldWith, ParseOptional, ParseSome,
     };
 }
 
@@ -215,7 +215,7 @@ pub use crate::{args::Args, buffer::Doc, error::ParseFailure, info::OptionParser
 // used by construct macro, not part of public API
 pub use crate::{args::State, error::Error, meta::Meta, structs::ParseCon};
 
-use std::{marker::PhantomData, str::FromStr};
+use std::{borrow::Cow, marker::PhantomData, str::FromStr};
 
 use crate::{
     buffer::{MetaInfo, Style},
@@ -224,8 +224,8 @@ use crate::{
     parsers::{NamedArg, ParseAny, ParseCommand, ParsePositional},
     structs::{
         ParseCollect, ParseCount, ParseFail, ParseFallback, ParseFallbackWith, ParseGroupHelp,
-        ParseGuard, ParseHide, ParseLast, ParseMany, ParseMap, ParseOptional, ParseOrElse,
-        ParsePure, ParsePureWith, ParseSome, ParseUsage, ParseWith, ParseWithGroupHelp,
+        ParseGuard, ParseHide, ParseLast, ParseMany, ParseTryFoldWith, ParseMap, ParseOptional,
+        ParseOrElse, ParsePure, ParsePureWith, ParseSome, ParseUsage, ParseWith, ParseWithGroupHelp,
     },
 };
 
@@ -656,6 +656,28 @@ pub trait Parser<T> {
     {
         ParseMany {
             inner: self,
+            catch: false,
+        }
+    }
+    // }}}
+
+    // {{{ try_fold_with
+    /// Consume zero or more items from a command line and collect them into an accumulated value.
+    ///
+    // #[cfg_attr(not(doctest), doc = include_str!("docs2/try_fold_with.md"))]
+    ///
+    /// # See also
+    /// [`some`](Parser::some) also collects results to a vector but requires at least one
+    /// element to succeed, [`collect`](Parser::collect) collects results into a [`FromIterator`]
+    /// structure
+    fn try_fold_with<F>(self, init: F) -> ParseTryFoldWith<Self, T, F>
+    where
+        Self: Sized,
+    {
+        ParseTryFoldWith {
+            parser: self,
+            parser_item: PhantomData,
+            init,
             catch: false,
         }
     }
@@ -1314,7 +1336,7 @@ where
 #[must_use]
 pub fn fail<T>(msg: &'static str) -> ParseFail<T> {
     ParseFail {
-        field1: msg,
+        field1: Cow::Borrowed(msg),
         field2: PhantomData,
     }
 }

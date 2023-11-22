@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use crate::{
     args::{Arg, State},
@@ -30,7 +30,7 @@ pub(crate) enum Message {
     ParseSome(&'static str),
 
     /// User asked for parser to fail explicitly
-    ParseFail(&'static str),
+    ParseFail(Cow<'static, str>),
 
     /// pure_with failed to parse a value
     PureFailed(String),
@@ -324,9 +324,8 @@ impl Message {
             }
 
             // Error: <message from some or fail>
-            Message::ParseSome(s) | Message::ParseFail(s) => {
-                doc.text(s);
-            }
+            Message::ParseSome(s) => doc.text(s),
+            Message::ParseFail(s) => doc.text(&s),
 
             // Error: couldn't parse FIELD: <FromStr message>
             Message::ParseFailed(mix, s) => {
